@@ -40,7 +40,7 @@ fn register_user_command_creates_config_file() {
     cmd.arg("register-user")
         .arg("--wallet-address")
         .arg("0x1234567890abcdef1234567890abcdef12345600")
-        .env("HOME", tmp.path()) // simulate different $HOME
+        .env("NEXUS_CONFIG_PATH", tmp.path()) // simulate different $NEXUS_CONFIG_PATH
         .assert()
         .success()
         .stdout(contains("User registered successfully"));
@@ -63,7 +63,7 @@ fn logout_deletes_config_file() {
     // Run the command
     let mut cmd = Command::cargo_bin(BINARY_NAME).unwrap();
     cmd.arg("logout")
-        .env("HOME", tmp.path()) // simulate different $HOME
+        .env("NEXUS_CONFIG_PATH", tmp.path()) // simulate different $NEXUS_CONFIG_PATH
         .assert()
         .success()
         .stdout(contains("Logging out"));

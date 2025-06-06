@@ -5,14 +5,18 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::{fs, path::Path};
 
-/// Get the path to the Nexus config file, typically located at ~/.nexus/config.json.
+/// Get the path to the Nexus config file, allowing for an override via the NEXUS_CONFIG_PATH environment variable.
 pub fn get_config_path() -> Result<PathBuf, std::io::Error> {
+    if let Ok(path) = std::env::var("NEXUS_CONFIG_PATH") {
+        let path = PathBuf::from(path);
+        return Ok(path.join(".nexus").join("config.json"));
+    }
+
     let home_path = home::home_dir().ok_or(std::io::Error::new(
         std::io::ErrorKind::NotFound,
         "Home directory not found",
     ))?;
-    let config_path = home_path.join(".nexus").join("config.json");
-    Ok(config_path)
+    Ok(home_path.join(".nexus").join("config.json"))
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
