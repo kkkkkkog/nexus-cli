@@ -65,7 +65,7 @@ pub fn start_workers(
     let mut handles = Vec::with_capacity(num_workers);
 
     for worker_id in 0..num_workers {
-        let (task_sender, mut task_receiver) = mpsc::channel::<Task>(1);
+        let (task_sender, mut task_receiver) = mpsc::channel::<Task>(8);
         // Clone senders and receivers for each worker.
         let prover_event_sender = event_sender.clone();
         let results_sender = results_sender.clone();

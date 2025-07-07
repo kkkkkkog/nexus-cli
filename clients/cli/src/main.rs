@@ -174,7 +174,7 @@ async fn start(
     }
     let orchestrator_client = OrchestratorClient::new(env);
     // Clamp the number of workers to [1,64]. Allow more workers to support multiple node IDs.
-    let num_workers: usize = max_threads.unwrap_or(1).clamp(1, 64) as usize;
+    let num_workers: usize = max_threads.unwrap_or(1).clamp(1, 8) as usize;
     let (shutdown_sender, _) = broadcast::channel(1); // Only one shutdown signal needed
 
     // Load config to get client_id for analytics
