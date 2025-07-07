@@ -5,7 +5,12 @@ use log::{debug, error};
 use nexus_sdk::stwo::seq::Proof;
 use nexus_sdk::{KnownExitCodes, Local, Prover, Viewable, stwo::seq::Stwo};
 use serde_json::json;
+use std::sync::OnceLock;
 use thiserror::Error;
+
+// Cache ELF bytes to avoid repeated file reads
+static DEFAULT_ELF_BYTES: OnceLock<&'static [u8]> = OnceLock::new();
+static INITIAL_ELF_BYTES: OnceLock<&'static [u8]> = OnceLock::new();
 
 #[derive(Error, Debug)]
 pub enum ProverError {
@@ -25,6 +30,20 @@ pub enum ProverError {
     Analytics(String),
 }
 
+/// Get cached ELF bytes for default program (fib_input)
+fn get_default_elf_bytes() -> &'static [u8] {
+    DEFAULT_ELF_BYTES.get_or_init(|| {
+        include_bytes!("../assets/fib_input")
+    })
+}
+
+/// Get cached ELF bytes for initial program (fib_input_initial)  
+fn get_initial_elf_bytes() -> &'static [u8] {
+    INITIAL_ELF_BYTES.get_or_init(|| {
+        include_bytes!("../assets/fib_input_initial")
+    })
+}
+
 /// Proves a program locally with hardcoded inputs.
 pub async fn prove_anonymously(
     environment: &Environment,
@@ -36,7 +55,7 @@ pub async fn prove_anonymously(
     // Sequence: F(0)=1, F(1)=1, F(2)=2, F(3)=3, F(4)=5, F(5)=8, F(6)=13, F(7)=21, F(8)=34, F(9)=55
     let public_input: (u32, u32, u32) = (9, 1, 1);
 
-    // Use the new initial ELF file for anonymous proving
+    // Create prover instance (optimized: reuse ELF bytes)
     let stwo_prover = get_initial_stwo_prover()?;
     let (view, proof) = stwo_prover
         .prove_with_input::<(), (u32, u32, u32)>(&(), &public_input)
@@ -197,7 +216,7 @@ fn get_triple_public_input(task: &Task) -> Result<(u32, u32, u32), ProverError> 
 
 /// Create a Stwo prover for the default program.
 pub fn get_default_stwo_prover() -> Result<Stwo<Local>, ProverError> {
-    let elf_bytes = include_bytes!("../assets/fib_input");
+    let elf_bytes = get_default_elf_bytes();
     Stwo::<Local>::new_from_bytes(elf_bytes).map_err(|e| {
         let msg = format!("Failed to load fib_input guest program: {}", e);
         ProverError::Stwo(msg)
@@ -206,7 +225,7 @@ pub fn get_default_stwo_prover() -> Result<Stwo<Local>, ProverError> {
 
 /// Create a Stwo prover for the initial program.
 pub fn get_initial_stwo_prover() -> Result<Stwo<Local>, ProverError> {
-    let elf_bytes = include_bytes!("../assets/fib_input_initial");
+    let elf_bytes = get_initial_elf_bytes();
     Stwo::<Local>::new_from_bytes(elf_bytes).map_err(|e| {
         let msg = format!("Failed to load fib_input_initial guest program: {}", e);
         ProverError::Stwo(msg)

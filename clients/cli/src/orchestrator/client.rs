@@ -10,6 +10,7 @@ use crate::nexus_orchestrator::{
 };
 use crate::orchestrator::Orchestrator;
 use crate::orchestrator::error::OrchestratorError;
+use crate::proxy::{should_use_proxy, get_random_proxy, proxy_file_exists, is_proxy_enabled, get_proxy_file_path};
 use crate::system::{estimate_peak_gflops, get_memory_info};
 use crate::task::Task;
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
@@ -32,13 +33,72 @@ pub struct OrchestratorClient {
 
 impl OrchestratorClient {
     pub fn new(environment: Environment) -> Self {
+        // Initialize proxy support and show status
+        Self::initialize_proxy_support();
+        
+        let client = Self::create_client_with_proxy();
         Self {
-            client: ClientBuilder::new()
-                .timeout(Duration::from_secs(10))
-                .build()
-                .expect("Failed to create HTTP client"),
+            client,
             environment,
         }
+    }
+
+    /// Initialize proxy support and show status once
+    fn initialize_proxy_support() {
+        static INITIALIZED: OnceLock<()> = OnceLock::new();
+        INITIALIZED.get_or_init(|| {
+            if should_use_proxy() {
+                match crate::proxy::get_proxy_manager().lock() {
+                    Ok(mut manager) => {
+                        if let Ok(()) = manager.ensure_proxies_loaded() {
+                            println!("✅ Proxy support enabled with {} proxies from {}", manager.proxy_count(), get_proxy_file_path());
+                        } else {
+                            println!("⚠️ Failed to load proxies from {}", get_proxy_file_path());
+                        }
+                    }
+                    Err(_) => {
+                        println!("⚠️ Failed to access proxy manager");
+                    }
+                }
+            } else if proxy_file_exists() && !is_proxy_enabled() {
+                println!("ℹ️ Proxy disabled by --no-proxy flag");
+            } else {
+                println!("ℹ️ No {} found, using direct connection", get_proxy_file_path());
+            }
+        });
+    }
+
+    /// Create HTTP client with random proxy if proxies.txt exists
+    fn create_client_with_proxy() -> Client {
+        let mut builder = ClientBuilder::new().timeout(Duration::from_secs(30)); // Increased timeout for proxy requests
+
+        // Check if proxy should be used and try to use a random proxy
+        if should_use_proxy() {
+            match get_random_proxy() {
+                Ok(proxy_config) => {
+                    match proxy_config.to_reqwest_proxy() {
+                        Ok(proxy) => {
+                            // Log proxy usage at debug level to avoid spam
+                            log::debug!("Using proxy: {}", proxy_config.to_display_string());
+                            builder = builder.proxy(proxy);
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to create proxy: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Failed to get random proxy: {}", e);
+                }
+            }
+        }
+
+        builder.build().expect("Failed to create HTTP client")
+    }
+
+    /// Get a client for a single request (with random proxy rotation)
+    fn get_client_for_request() -> Client {
+        Self::create_client_with_proxy()
     }
 
     fn build_url(&self, endpoint: &str) -> String {
@@ -70,8 +130,8 @@ impl OrchestratorClient {
         body: Vec<u8>,
     ) -> Result<T, OrchestratorError> {
         let url = self.build_url(endpoint);
-        let response = self
-            .client
+        let client = Self::get_client_for_request();
+        let response = client
             .get(&url)
             .header("Content-Type", "application/octet-stream")
             .body(body)
@@ -89,8 +149,8 @@ impl OrchestratorClient {
         body: Vec<u8>,
     ) -> Result<T, OrchestratorError> {
         let url = self.build_url(endpoint);
-        let response = self
-            .client
+        let client = Self::get_client_for_request();
+        let response = client
             .post(&url)
             .header("Content-Type", "application/octet-stream")
             .body(body)
@@ -108,8 +168,8 @@ impl OrchestratorClient {
         body: Vec<u8>,
     ) -> Result<(), OrchestratorError> {
         let url = self.build_url(endpoint);
-        let response = self
-            .client
+        let client = Self::get_client_for_request();
+        let response = client
             .post(&url)
             .header("Content-Type", "application/octet-stream")
             .body(body)
@@ -171,8 +231,8 @@ impl OrchestratorClient {
     }
 
     async fn get_country_from_cloudflare(&self) -> Result<String, Box<dyn std::error::Error>> {
-        let response = self
-            .client
+        let client = Self::get_client_for_request();
+        let response = client
             .get("https://cloudflare.com/cdn-cgi/trace")
             .timeout(Duration::from_secs(5))
             .send()
@@ -193,8 +253,8 @@ impl OrchestratorClient {
     }
 
     async fn get_country_from_ipinfo(&self) -> Result<String, Box<dyn std::error::Error>> {
-        let response = self
-            .client
+        let client = Self::get_client_for_request();
+        let response = client
             .get("https://ipinfo.io/country")
             .timeout(Duration::from_secs(5))
             .send()

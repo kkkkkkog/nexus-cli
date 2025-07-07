@@ -14,6 +14,7 @@ mod orchestrator;
 mod pretty;
 mod prover;
 mod prover_runtime;
+mod proxy;
 mod register;
 pub mod system;
 mod task;
@@ -24,7 +25,7 @@ mod workers;
 use crate::config::{Config, get_config_path};
 use crate::environment::Environment;
 use crate::orchestrator::{Orchestrator, OrchestratorClient};
-use crate::prover_runtime::{start_anonymous_workers, start_authenticated_workers};
+use crate::prover_runtime::{start_anonymous_workers, start_authenticated_workers_multi};
 use crate::register::{register_node, register_user};
 use clap::{ArgAction, Parser, Subcommand};
 use crossterm::{
@@ -50,9 +51,9 @@ struct Args {
 enum Command {
     /// Start the prover
     Start {
-        /// Node ID
-        #[arg(long, value_name = "NODE_ID")]
-        node_id: Option<u64>,
+        /// Node ID (can specify multiple)
+        #[arg(long, value_name = "NODE_ID", action = ArgAction::Append)]
+        node_id: Vec<u64>,
 
         /// Run without the terminal UI
         #[arg(long = "headless", action = ArgAction::SetTrue)]
@@ -61,6 +62,14 @@ enum Command {
         /// Maximum number of threads to use for proving.
         #[arg(long = "max-threads", value_name = "MAX_THREADS")]
         max_threads: Option<u32>,
+
+        /// Disable proxy usage even if proxies.txt exists
+        #[arg(long = "no-proxy", action = ArgAction::SetTrue)]
+        no_proxy: bool,
+
+        /// Custom path to proxy file (default: proxies.txt)
+        #[arg(long = "proxy", value_name = "PATH")]
+        proxy_file: Option<String>,
     },
     /// Register a new user
     RegisterUser {
@@ -93,7 +102,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             node_id,
             headless,
             max_threads,
-        } => start(node_id, environment, config_path, headless, max_threads).await,
+            no_proxy,
+            proxy_file,
+        } => start(node_id, environment, config_path, headless, max_threads, no_proxy, proxy_file).await,
         Command::Logout => {
             println!("Logging out and clearing node configuration file...");
             Config::clear_node_config(&config_path).map_err(Into::into)
@@ -113,37 +124,54 @@ async fn main() -> Result<(), Box<dyn Error>> {
 /// Starts the Nexus CLI application.
 ///
 /// # Arguments
-/// * `node_id` - This client's unique identifier, if available.
+/// * `node_ids` - This client's unique identifiers, if available.
 /// * `env` - The environment to connect to.
 /// * `config_path` - Path to the configuration file.
 /// * `headless` - If true, runs without the terminal UI.
 /// * `max_threads` - Optional maximum number of threads to use for proving.
 async fn start(
-    node_id: Option<u64>,
+    node_ids: Vec<u64>,
     env: Environment,
     config_path: std::path::PathBuf,
     headless: bool,
     max_threads: Option<u32>,
+    no_proxy: bool,
+    proxy_file: Option<String>,
 ) -> Result<(), Box<dyn Error>> {
-    let mut node_id = node_id;
+    let mut node_ids = node_ids;
     // If no node ID is provided, try to load it from the config file.
-    if node_id.is_none() && config_path.exists() {
+    if node_ids.is_empty() && config_path.exists() {
         let config = Config::load_from_file(&config_path)?;
-        node_id = Some(config.node_id.parse::<u64>().map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "Failed to parse node_id {:?} from the config file as a u64: {}",
-                    config.node_id, e
-                ),
-            )
-        })?);
-        println!("Read Node ID: {} from config file", node_id.unwrap());
+        if !config.node_id.is_empty() {
+            // Support comma-separated node IDs in config
+            let parsed_ids: Result<Vec<u64>, _> = config.node_id
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.parse::<u64>())
+                .collect();
+            
+            node_ids = parsed_ids.map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Failed to parse node_ids {:?} from the config file as u64: {}",
+                        config.node_id, e
+                    ),
+                )
+            })?;
+            println!("Read Node IDs: {:?} from config file", node_ids);
+        }
     }
 
     // Create a signing key for the prover.
     let mut csprng = rand_core::OsRng;
     let signing_key: SigningKey = SigningKey::generate(&mut csprng);
+    // Set global proxy settings
+    crate::proxy::set_proxy_enabled(!no_proxy);
+    if let Some(proxy_path) = proxy_file {
+        crate::proxy::set_proxy_file_path(proxy_path);
+    }
     let orchestrator_client = OrchestratorClient::new(env);
     // Clamp the number of workers to [1,8]. Keep this low for now to avoid rate limiting.
     let num_workers: usize = max_threads.unwrap_or(1).clamp(1, 8) as usize;
@@ -169,22 +197,21 @@ async fn start(
         uuid::Uuid::new_v4().to_string() // Fallback to random UUID
     };
 
-    let (mut event_receiver, mut join_handles) = match node_id {
-        Some(node_id) => {
-            start_authenticated_workers(
-                node_id,
-                signing_key.clone(),
-                orchestrator_client.clone(),
-                num_workers,
-                shutdown_sender.subscribe(),
-                env,
-                client_id,
-            )
-            .await
-        }
-        None => {
-            start_anonymous_workers(num_workers, shutdown_sender.subscribe(), env, client_id).await
-        }
+    let (mut event_receiver, mut join_handles) = if node_ids.is_empty() {
+        // Anonymous mode
+        start_anonymous_workers(num_workers, shutdown_sender.subscribe(), env, client_id).await
+    } else {
+        // Authenticated mode with multiple node IDs support
+        start_authenticated_workers_multi(
+            node_ids.clone(),
+            signing_key.clone(),
+            orchestrator_client.clone(),
+            num_workers,
+            shutdown_sender.subscribe(),
+            env,
+            client_id,
+        )
+        .await
     };
 
     if !headless {
@@ -199,7 +226,7 @@ async fn start(
 
         // Create the application and run it.
         let app = ui::App::new(
-            node_id,
+            if node_ids.is_empty() { None } else { Some(node_ids[0]) },
             *orchestrator_client.environment(),
             event_receiver,
             shutdown_sender,

@@ -28,36 +28,64 @@ pub async fn start_authenticated_workers(
     environment: Environment,
     client_id: String,
 ) -> (mpsc::Receiver<Event>, Vec<JoinHandle<()>>) {
+    start_authenticated_workers_multi(
+        vec![node_id],
+        signing_key,
+        orchestrator,
+        num_workers,
+        shutdown,
+        environment,
+        client_id,
+    )
+    .await
+}
+
+/// Starts authenticated workers for multiple node IDs that fetch tasks from the orchestrator and process them.
+pub async fn start_authenticated_workers_multi(
+    node_ids: Vec<u64>,
+    signing_key: SigningKey,
+    orchestrator: OrchestratorClient,
+    num_workers: usize,
+    shutdown: broadcast::Receiver<()>,
+    environment: Environment,
+    client_id: String,
+) -> (mpsc::Receiver<Event>, Vec<JoinHandle<()>>) {
     let mut join_handles = Vec::new();
-    // Worker events
+    // Worker events - single channel for all node IDs
     let (event_sender, event_receiver) = mpsc::channel::<Event>(EVENT_QUEUE_SIZE);
 
-    // A bounded list of recently fetched task IDs (prevents refetching currently processing tasks)
-    let enqueued_tasks = TaskCache::new(MAX_COMPLETED_TASKS);
-
-    // Task fetching
+    // Single task queue shared across all node IDs
     let (task_sender, task_receiver) = mpsc::channel::<Task>(TASK_QUEUE_SIZE);
-    let verifying_key = signing_key.verifying_key();
-    let fetch_prover_tasks_handle = {
-        let orchestrator = orchestrator.clone();
-        let event_sender = event_sender.clone();
-        let shutdown = shutdown.resubscribe(); // Clone the receiver for task fetching
-        tokio::spawn(async move {
-            online::fetch_prover_tasks(
-                node_id,
-                verifying_key,
-                Box::new(orchestrator),
-                task_sender,
-                event_sender,
-                shutdown,
-                enqueued_tasks,
-            )
-            .await;
-        })
-    };
-    join_handles.push(fetch_prover_tasks_handle);
+    
+    // Create task fetchers for each node ID
+    for node_id in &node_ids {
+        // A bounded list of recently fetched task IDs (prevents refetching currently processing tasks)
+        let enqueued_tasks = TaskCache::new(MAX_COMPLETED_TASKS);
+        
+        let verifying_key = signing_key.verifying_key();
+        let fetch_prover_tasks_handle = {
+            let orchestrator = orchestrator.clone();
+            let event_sender = event_sender.clone();
+            let task_sender = task_sender.clone();
+            let shutdown = shutdown.resubscribe(); // Clone the receiver for task fetching
+            let node_id = *node_id;
+            tokio::spawn(async move {
+                online::fetch_prover_tasks(
+                    node_id,
+                    verifying_key,
+                    Box::new(orchestrator),
+                    task_sender,
+                    event_sender,
+                    shutdown,
+                    enqueued_tasks,
+                )
+                .await;
+            })
+        };
+        join_handles.push(fetch_prover_tasks_handle);
+    }
 
-    // Workers
+    // Workers - shared pool for all node IDs
     let (result_sender, result_receiver) = mpsc::channel::<(Task, Proof)>(RESULT_QUEUE_SIZE);
 
     let (worker_senders, worker_handles) = offline::start_workers(
