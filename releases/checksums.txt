@@ -1,0 +1,3 @@
+661fbc4e96d4a3a2ab6364d1791ebc855f825789f60148ae8cbeb05290621911  nexus-network-0.9.6-a-linux-x86_64
+5074f77b2eb1a0b891b87d6c5f94ca37f0eb714ffdd8c1b54916ef36c8b03070  nexus-network-0.9.6-a-linux-x86_64.tar.gz
+955a37fc3eea9054457e0e10b262aa0eeece4410ffa5d78d81d491101182e533  nexus-network-0.9.6-a-linux-x86_64.zip
