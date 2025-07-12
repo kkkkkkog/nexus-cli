@@ -12,6 +12,10 @@ echo "Running build script..."
 
 # Git operations
 echo "Creating git tag..."
+# Delete existing tag locally and remotely
+git tag -d "$TAG" 2>/dev/null || true
+git push origin ":refs/tags/$TAG" 2>/dev/null || true
+
 # Add all new files and changes
 git add clients/cli/Cargo.toml
 git add clients/cli/Cargo.lock
@@ -30,6 +34,9 @@ git commit -m "Release $TAG"
 git tag -a "$TAG" -m "Release $TAG"
 git push origin main
 git push origin "$TAG"
+
+# Delete existing release if it exists
+gh release delete "$TAG" --yes 2>/dev/null || true
 
 # Create GitHub release
 echo "Creating GitHub release..."
