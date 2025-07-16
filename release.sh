@@ -2,7 +2,7 @@
 set -e  # Exit on any error
 
 # Version
-VERSION="0.9.6-b"
+VERSION="0.9.7"
 BINARY_NAME="nexus-network"
 TAG="v$VERSION"
 
@@ -27,7 +27,7 @@ git add releases/checksums-static.txt
 
 # Remove old files
 git rm -f releases/checksums.txt || true
-git rm -f releases/$BINARY_NAME-0.9.6-a-linux-x86_64* || true
+git rm -f releases/$BINARY_NAME-0.9.7-linux-x86_64* || true
 
 # Commit changes
 git commit -m "Release $TAG"
