@@ -16,18 +16,18 @@ echo "Creating git tag..."
 git tag -d "$TAG" 2>/dev/null || true
 git push origin ":refs/tags/$TAG" 2>/dev/null || true
 
+# Remove old files if they exist
+git rm -f releases/checksums.txt 2>/dev/null || true
+git rm -f releases/$BINARY_NAME-0.9.6-b-linux-x86_64* 2>/dev/null || true
+
 # Add all new files and changes
 git add clients/cli/Cargo.toml
 git add clients/cli/Cargo.lock
-git add clients/cli/.cargo/
+git add clients/cli/.cargo/ 2>/dev/null || true
 git add build.sh
 git add release.sh
-git add releases/$BINARY_NAME-$VERSION-linux-x86_64-static*
-git add releases/checksums-static.txt
-
-# Remove old files
-git rm -f releases/checksums.txt || true
-git rm -f releases/$BINARY_NAME-0.9.7-linux-x86_64* || true
+git add releases/$BINARY_NAME-$VERSION-linux-x86_64-static* 2>/dev/null || true
+git add releases/checksums-static.txt 2>/dev/null || true
 
 # Commit changes
 git commit -m "Release $TAG"
