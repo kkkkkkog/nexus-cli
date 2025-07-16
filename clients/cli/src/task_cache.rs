@@ -43,7 +43,6 @@ impl TaskCache {
         if self.contains(&task_id).await {
             return;
         }
-
         let mut queue = self.inner.lock().await;
         if queue.len() == self.capacity {
             queue.pop_front();

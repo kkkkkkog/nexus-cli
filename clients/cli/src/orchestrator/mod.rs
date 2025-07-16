@@ -50,4 +50,7 @@ pub trait Orchestrator: Send + Sync {
         signing_key: SigningKey,
         num_provers: usize,
     ) -> Result<(), OrchestratorError>;
+
+    /// Get the wallet address associated with a node ID.
+    async fn get_node(&self, node_id: &str) -> Result<String, OrchestratorError>;
 }

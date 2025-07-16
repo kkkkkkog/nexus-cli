@@ -179,7 +179,7 @@ async fn start(
     let (shutdown_sender, _) = broadcast::channel(1); // Only one shutdown signal needed
 
     // Get client_id for analytics - use wallet address from API if available, otherwise "anonymous"
-    let client_id = if let Some(node_id) = node_id {
+    let client_id = if let Some(node_id) = node_ids.first() {
         match orchestrator_client.get_node(&node_id.to_string()).await {
             Ok(wallet_address) => {
                 // Use wallet address as client_id for analytics

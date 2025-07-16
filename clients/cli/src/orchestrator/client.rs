@@ -371,6 +371,15 @@ impl Orchestrator for OrchestratorClient {
         self.post_request_no_response("v3/tasks/submit", request_bytes)
             .await
     }
+
+    /// Get the wallet address associated with a node ID.
+    async fn get_node(&self, node_id: &str) -> Result<String, OrchestratorError> {
+        let endpoint = format!("v3/nodes/{}", node_id);
+
+        let node_response: crate::nexus_orchestrator::GetNodeResponse =
+            self.get_request(&endpoint).await?;
+        Ok(node_response.wallet_address)
+    }
 }
 
 #[cfg(test)]
@@ -486,5 +495,22 @@ mod live_orchestrator_tests {
         // Should be a valid 2-letter country code
         assert_eq!(country.len(), 2);
         assert!(country.chars().all(|c| c.is_ascii_uppercase()));
+    }
+
+    #[tokio::test]
+    #[ignore] // This test requires a live orchestrator instance.
+    /// Should return the wallet address associated with a node ID.
+    async fn test_get_node() {
+        let client = super::OrchestratorClient::new(Environment::Beta);
+        let node_id = "5880437"; // Example node ID
+        match client.get_node(node_id).await {
+            Ok(wallet_address) => {
+                println!("Wallet address for node {}: {}", node_id, wallet_address);
+                // Should be a valid Ethereum address (42 chars starting with 0x)
+                assert!(wallet_address.starts_with("0x"));
+                assert_eq!(wallet_address.len(), 42);
+            }
+            Err(e) => panic!("Failed to get wallet address for node: {}", e),
+        }
     }
 }

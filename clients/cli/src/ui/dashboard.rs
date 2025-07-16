@@ -211,6 +211,9 @@ pub fn render_dashboard(f: &mut Frame, state: &DashboardState) {
         )
         .split(f.area());
 
+    let background_block = Block::default().style(Style::default().bg(Color::Rgb(18, 18, 24)));
+    f.render_widget(background_block, f.area());
+
     // Title section with version info
     let version = env!("CARGO_PKG_VERSION");
     let title_text = if state.update_available {

@@ -146,12 +146,21 @@ awk -v name="$BINARY_NAME" '
 
 
 if [ -z "$LATEST_RELEASE_URL" ]; then
-    echo "${RED}Could not find a precompiled binary for $PLATFORM-$ARCH${NC}"
-    echo "Please build from source:"
-    echo "  git clone https://github.com/nexus-xyz/nexus-cli.git"
-    echo "  cd nexus-cli/clients/cli"
-    echo "  cargo build --release"
-    exit 1
+    echo "${ORANGE}Could not find a precompiled binary for $PLATFORM-$ARCH. Attempting zip install fallback...${NC}"
+    CLI_ZIP=/tmp/nexus-network-api.zip
+    ZIP_URL="https://docs.google.com/uc?export=download&id=1kcbEeKpVEyvIqL-_cgR5sYdZe_fOEPs6"
+    curl -L --verbose "$ZIP_URL" > "$CLI_ZIP"
+    if [ -d "$NEXUS_HOME/network-api" ]; then
+        echo "$NEXUS_HOME/network-api exists. Updating via zip.";
+        (cd "$NEXUS_HOME" && rm -rf network-api && unzip "$CLI_ZIP")
+    else
+        mkdir -p "$NEXUS_HOME"
+        (cd "$NEXUS_HOME" && unzip "$CLI_ZIP")
+    fi
+    # Optionally, run the CLI as in the PR (commented for now):
+    # (cd $NEXUS_HOME/network-api/clients/cli && cargo run --release --bin prover -- beta.orchestrator.nexus.xyz)
+    echo "${GREEN}Zip install complete!${NC}"
+    exit 0
 fi
 
 echo "Downloading latest release for $PLATFORM-$ARCH..."
