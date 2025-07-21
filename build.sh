@@ -2,7 +2,7 @@
 set -e  # Exit on any error
 
 # Version
-VERSION="0.9.7"
+VERSION="0.10.0"
 BINARY_NAME="nexus-network"
 
 # Install dependencies
