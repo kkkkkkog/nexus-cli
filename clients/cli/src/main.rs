@@ -71,6 +71,14 @@ enum Command {
         /// Custom path to proxy file (default: proxies.txt)
         #[arg(long = "proxy", value_name = "PATH")]
         proxy_file: Option<String>,
+
+        /// Custom orchestrator URL (overrides environment setting)
+        #[arg(long = "orchestrator-url", value_name = "URL")]
+        orchestrator_url: Option<String>,
+
+        /// Disable background colors in the dashboard
+        #[arg(long = "no-background-color", action = ArgAction::SetTrue)]
+        no_background_color: bool,
     },
     /// Register a new user
     RegisterUser {
@@ -105,7 +113,29 @@ async fn main() -> Result<(), Box<dyn Error>> {
             max_threads,
             no_proxy,
             proxy_file,
-        } => start(node_id, environment, config_path, headless, max_threads, no_proxy, proxy_file).await,
+            orchestrator_url,
+            no_background_color,
+        } => {
+            // If a custom orchestrator URL is provided, create a custom environment
+            let final_environment = if let Some(url) = orchestrator_url {
+                Environment::Custom {
+                    orchestrator_url: url,
+                }
+            } else {
+                environment
+            };
+            start(
+                node_id,
+                final_environment,
+                config_path,
+                headless,
+                max_threads,
+                no_proxy,
+                proxy_file,
+                no_background_color,
+            )
+            .await
+        }
         Command::Logout => {
             println!("Logging out and clearing node configuration file...");
             Config::clear_node_config(&config_path).map_err(Into::into)
@@ -138,6 +168,7 @@ async fn start(
     max_threads: Option<u32>,
     no_proxy: bool,
     proxy_file: Option<String>,
+    no_background_color: bool,
 ) -> Result<(), Box<dyn Error>> {
     let mut node_ids = node_ids;
     // If no node ID is provided, try to load it from the config file.
@@ -173,8 +204,8 @@ async fn start(
     if let Some(proxy_path) = proxy_file {
         crate::proxy::set_proxy_file_path(proxy_path);
     }
-    let orchestrator_client = OrchestratorClient::new(env);
-    // Clamp the number of workers to [1,64]. Allow more workers to support multiple node IDs.
+    let orchestrator_client = OrchestratorClient::new(env.clone());
+    // Clamp the number of workers to [1,8]. Keep this low for now to avoid rate limiting.
     let num_workers: usize = max_threads.unwrap_or(1).clamp(1, 8) as usize;
     let (shutdown_sender, _) = broadcast::channel(1); // Only one shutdown signal needed
 
@@ -225,9 +256,10 @@ async fn start(
         // Create the application and run it.
         let app = ui::App::new(
             if node_ids.is_empty() { None } else { Some(node_ids[0]) },
-            *orchestrator_client.environment(),
+            orchestrator_client.environment().clone(),
             event_receiver,
             shutdown_sender,
+            no_background_color,
         );
         let res = ui::run(&mut terminal, app).await;
 

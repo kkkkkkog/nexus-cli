@@ -158,13 +158,6 @@ pub struct UserResponse {
     #[prost(string, tag = "4")]
     pub wallet_address: ::prost::alloc::string::String,
 }
-/// Response to get a single node by ID
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct GetNodeResponse {
-    /// The wallet address of the node's owner
-    #[prost(string, tag = "1")]
-    pub wallet_address: ::prost::alloc::string::String,
-}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum NodeType {

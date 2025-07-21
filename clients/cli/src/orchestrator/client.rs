@@ -69,7 +69,9 @@ impl OrchestratorClient {
 
     /// Create HTTP client with random proxy if proxies.txt exists
     fn create_client_with_proxy() -> Client {
-        let mut builder = ClientBuilder::new().timeout(Duration::from_secs(30)); // Increased timeout for proxy requests
+        let mut builder = ClientBuilder::new()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30)); // Increased timeout for proxy requests
 
         // Check if proxy should be used and try to use a random proxy
         if should_use_proxy() {
@@ -392,7 +394,7 @@ mod live_orchestrator_tests {
     #[ignore] // This test requires a live orchestrator instance.
     /// Should register a new user with the orchestrator.
     async fn test_register_user() {
-        let client = super::OrchestratorClient::new(Environment::Beta);
+        let client = super::OrchestratorClient::new(Environment::Production);
         // UUIDv4 for the user ID
         let user_id = uuid::Uuid::new_v4().to_string();
         let wallet_address = "0x1234567890abcdef1234567890cbaabc12345678"; // Example wallet address
@@ -406,7 +408,7 @@ mod live_orchestrator_tests {
     #[ignore] // This test requires a live orchestrator instance.
     /// Should register a new node to an existing user.
     async fn test_register_node() {
-        let client = super::OrchestratorClient::new(Environment::Beta);
+        let client = super::OrchestratorClient::new(Environment::Production);
         let user_id = "78db0be7-f603-4511-9576-c660f3c58395";
         match client.register_node(user_id).await {
             Ok(node_id) => println!("Node registered successfully: {}", node_id),
@@ -418,7 +420,7 @@ mod live_orchestrator_tests {
     #[ignore] // This test requires a live orchestrator instance.
     /// Should return a new proof task for the node.
     async fn test_get_proof_task() {
-        let client = super::OrchestratorClient::new(Environment::Beta);
+        let client = super::OrchestratorClient::new(Environment::Production);
         let node_id = "5880437"; // Example node ID
         let signing_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
         let verifying_key = signing_key.verifying_key();
@@ -437,7 +439,7 @@ mod live_orchestrator_tests {
     #[ignore] // This test requires a live orchestrator instance.
     /// Should return the list of existing tasks for the node.
     async fn test_get_tasks() {
-        let client = super::OrchestratorClient::new(Environment::Beta);
+        let client = super::OrchestratorClient::new(Environment::Production);
         let node_id = "5880437"; // Example node ID
         match client.get_tasks(node_id).await {
             Ok(tasks) => {
@@ -456,7 +458,7 @@ mod live_orchestrator_tests {
     #[ignore] // This test requires a live orchestrator instance.
     /// Should return the user ID associated with a previously-registered wallet address.
     async fn test_get_user() {
-        let client = super::OrchestratorClient::new(Environment::Beta);
+        let client = super::OrchestratorClient::new(Environment::Production);
         let wallet_address = "0x52908400098527886E0F7030069857D2E4169EE8";
         match client.get_user(wallet_address).await {
             Ok(user_id) => {
@@ -471,7 +473,7 @@ mod live_orchestrator_tests {
     #[ignore] // This test requires a live orchestrator instance.
     /// Should return the wallet address associated with a node ID.
     async fn test_get_node() {
-        let client = super::OrchestratorClient::new(Environment::Beta);
+        let client = super::OrchestratorClient::new(Environment::Production);
         let node_id = "5880437"; // Example node ID
         match client.get_node(node_id).await {
             Ok(wallet_address) => {
@@ -487,7 +489,7 @@ mod live_orchestrator_tests {
     #[tokio::test]
     /// Should detect country using Cloudflare/fallback services.
     async fn test_country_detection() {
-        let client = super::OrchestratorClient::new(Environment::Beta);
+        let client = super::OrchestratorClient::new(Environment::Production);
         let country = client.get_country().await;
 
         println!("Detected country: {}", country);

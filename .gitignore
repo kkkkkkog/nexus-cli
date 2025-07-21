@@ -75,4 +75,6 @@ target/
 
 .idea
 
+# Generated files
+public/install.sh
 proxies.txt
