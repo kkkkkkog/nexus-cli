@@ -1,3 +1,3 @@
-aa25c23705fe0d9a8307052f953536d84f126555935fdf39a6bfc4dc5b3288f8  nexus-network-0.9.7-linux-x86_64-static
-424c5b01df94acb1b5409b08ef812db7c7e74aa7633807fa92cd7a243541219a  nexus-network-0.9.7-linux-x86_64-static.tar.gz
-ef9cbbea08f7663698385a3296649723abf333ceb0845c74c0577d97dae70bb1  nexus-network-0.9.7-linux-x86_64-static.zip
+3c0734af00c065cd15e99e2461ea5ec4d5b66c12676c9afdf4733f067750892e  nexus-network-0.10.0-linux-x86_64-static
+fe35d4b681f816875741e271243f9666fa36a032d41068a4fc4606a68fc3cd6b  nexus-network-0.10.0-linux-x86_64-static.tar.gz
+fea7be62801fe20615ae14211a812c4366f0edf7d5cbfa0cec60bc691135d08f  nexus-network-0.10.0-linux-x86_64-static.zip
