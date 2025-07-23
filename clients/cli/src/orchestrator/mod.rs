@@ -51,7 +51,4 @@ pub trait Orchestrator: Send + Sync {
         num_provers: usize,
         task_type: Option<crate::nexus_orchestrator::TaskType>,
     ) -> Result<(), OrchestratorError>;
-
-    /// Get the wallet address associated with a node ID.
-    async fn get_node(&self, node_id: &str) -> Result<String, OrchestratorError>;
 }

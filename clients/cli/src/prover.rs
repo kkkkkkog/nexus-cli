@@ -5,7 +5,7 @@ use log::error;
 use nexus_sdk::Verifiable;
 use nexus_sdk::stwo::seq::Proof;
 use nexus_sdk::{KnownExitCodes, Local, Prover, Viewable, stwo::seq::Stwo};
-use serde_json::json;
+use serde_json::Value;
 use std::sync::OnceLock;
 use thiserror::Error;
 

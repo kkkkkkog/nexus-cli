@@ -382,15 +382,6 @@ impl Orchestrator for OrchestratorClient {
         self.post_request_no_response("v3/tasks/submit", request_bytes)
             .await
     }
-
-    /// Get the wallet address associated with a node ID.
-    async fn get_node(&self, node_id: &str) -> Result<String, OrchestratorError> {
-        let endpoint = format!("v3/nodes/{}", node_id);
-
-        let node_response: crate::nexus_orchestrator::GetNodeResponse =
-            self.get_request(&endpoint).await?;
-        Ok(node_response.wallet_address)
-    }
 }
 
 #[cfg(test)]
