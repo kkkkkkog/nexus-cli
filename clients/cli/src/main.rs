@@ -21,13 +21,16 @@ mod task;
 mod task_cache;
 mod ui;
 mod version_checker;
+mod version_requirements;
 mod workers;
 
 use crate::config::{Config, get_config_path};
 use crate::environment::Environment;
 use crate::orchestrator::{Orchestrator, OrchestratorClient};
+use crate::pretty::print_cmd_info;
 use crate::prover_runtime::{start_anonymous_workers, start_authenticated_workers_multi};
 use crate::register::{register_node, register_user};
+use crate::version_requirements::{VersionRequirements, VersionRequirementsError};
 use clap::{ArgAction, Parser, Subcommand};
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
@@ -137,11 +140,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .await
         }
         Command::Logout => {
-            println!("Logging out and clearing node configuration file...");
+            print_cmd_info!("Logging out", "Clearing node configuration file...");
             Config::clear_node_config(&config_path).map_err(Into::into)
         }
         Command::RegisterUser { wallet_address } => {
-            println!("Registering user with wallet address: {}", wallet_address);
+            print_cmd_info!("Registering user", "Wallet address: {}", wallet_address);
             let orchestrator = Box::new(OrchestratorClient::new(environment));
             register_user(&wallet_address, &config_path, orchestrator).await
         }
@@ -170,11 +173,70 @@ async fn start(
     proxy_file: Option<String>,
     no_background_color: bool,
 ) -> Result<(), Box<dyn Error>> {
+    // Check version requirements before starting any workers
+    match VersionRequirements::fetch().await {
+        Ok(requirements) => {
+            let current_version = env!("CARGO_PKG_VERSION");
+            match requirements.check_version_constraints(current_version, None, None) {
+                Ok(Some(violation)) => match violation.constraint_type {
+                    crate::version_requirements::ConstraintType::Blocking => {
+                        eprintln!("❌ Version requirement not met: {}", violation.message);
+                        std::process::exit(1);
+                    }
+                    crate::version_requirements::ConstraintType::Warning => {
+                        eprintln!("⚠️  {}", violation.message);
+                    }
+                    crate::version_requirements::ConstraintType::Notice => {
+                        eprintln!("ℹ️  {}", violation.message);
+                    }
+                },
+                Ok(None) => {
+                    // No violations found, continue
+                }
+                Err(e) => {
+                    eprintln!("❌ Failed to parse version requirements: {}", e);
+                    eprintln!(
+                        "If this issue persists, please file a bug report at: https://github.com/nexus-xyz/nexus-cli/issues"
+                    );
+                    std::process::exit(1);
+                }
+            }
+        }
+        Err(VersionRequirementsError::Fetch(e)) => {
+            eprintln!("❌ Failed to fetch version requirements: {}", e);
+            eprintln!(
+                "If this issue persists, please file a bug report at: https://github.com/nexus-xyz/nexus-cli/issues"
+            );
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to check version requirements: {}", e);
+            eprintln!(
+                "If this issue persists, please file a bug report at: https://github.com/nexus-xyz/nexus-cli/issues"
+            );
+            std::process::exit(1);
+        }
+    }
+
     let mut node_ids = node_ids;
+
     // If no node ID is provided, try to load it from the config file.
     if node_ids.is_empty() && config_path.exists() {
         let config = Config::load_from_file(&config_path)?;
-        if !config.node_id.is_empty() {
+
+        // Check if user is registered but node_ids are missing or invalid
+        if !config.user_id.is_empty() {
+            if config.node_id.is_empty() {
+                print_cmd_info!(
+                    "✅ User registered, but no node found.",
+                    "Please register a node to continue: nexus-cli register-node"
+                );
+                return Err(
+                    "Node registration required. Please run 'nexus-cli register-node' first."
+                        .into(),
+                );
+            }
+
             // Support comma-separated node IDs in config
             let parsed_ids: Result<Vec<u64>, _> = config.node_id
                 .split(',')
@@ -183,17 +245,32 @@ async fn start(
                 .map(|s| s.parse::<u64>())
                 .collect();
             
-            node_ids = parsed_ids.map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!(
-                        "Failed to parse node_ids {:?} from the config file as u64: {}",
-                        config.node_id, e
-                    ),
-                )
-            })?;
-            println!("Read Node IDs: {:?} from config file", node_ids);
+            match parsed_ids {
+                Ok(ids) => {
+                    node_ids = ids;
+                    print_cmd_info!("✅ Found Node IDs from config file", "Node IDs: {:?}", node_ids);
+                }
+                Err(_) => {
+                    print_cmd_info!(
+                        "❌ Invalid node IDs in config file.",
+                        "Please register a new node: nexus-cli register-node"
+                    );
+                    return Err("Invalid node IDs in config. Please run 'nexus-cli register-node' to fix this.".into());
+                }
+            }
+        } else {
+            print_cmd_info!(
+                "❌ No user registration found.",
+                "Please register your wallet address first: nexus-cli register-user --wallet-address <your-wallet-address>"
+            );
+            return Err("User registration required. Please run 'nexus-cli register-user --wallet-address <your-wallet-address>' first.".into());
         }
+    } else if node_ids.is_empty() {
+        // No config file exists at all
+        print_cmd_info!(
+            "Welcome to Nexus CLI!",
+            "Please register your wallet address to get started: nexus-cli register-user --wallet-address <your-wallet-address>"
+        );
     }
 
     // Create a signing key for the prover.

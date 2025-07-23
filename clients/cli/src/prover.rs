@@ -243,8 +243,13 @@ mod tests {
     #[tokio::test]
     // Proves a program with hardcoded inputs should succeed.
     async fn test_prove_anonymously() {
-        if let Err(e) = prove_anonymously().await {
-            panic!("Failed to prove anonymously: {}", e);
+        match prove_anonymously().await {
+            Ok(_) => {
+                // Success case - version requirements were met or couldn't be fetched
+            }
+            Err(e) => {
+                panic!("Failed to prove anonymously: {}", e);
+            }
         }
     }
 }
