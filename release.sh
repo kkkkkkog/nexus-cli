@@ -2,7 +2,7 @@
 set -e  # Exit on any error
 
 # Version
-VERSION="0.10.0"
+VERSION="0.10.5"
 BINARY_NAME="nexus-network"
 TAG="v$VERSION"
 
@@ -18,7 +18,7 @@ git push origin ":refs/tags/$TAG" 2>/dev/null || true
 
 # Remove old files if they exist
 git rm -f releases/checksums.txt 2>/dev/null || true
-git rm -f releases/$BINARY_NAME-0.9.6-b-linux-x86_64* 2>/dev/null || true
+git rm -f releases/$BINARY_NAME-0.10.5-linux-x86_64* 2>/dev/null || true
 
 # Add all new files and changes
 git add clients/cli/Cargo.toml
