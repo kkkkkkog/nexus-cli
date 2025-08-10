@@ -51,7 +51,7 @@ This will:
 2. Prompt you to accept the Terms of Use.
 3. Start the CLI in interactive mode.
 
-The exact installation script is viewable [here](./public/install.sh).
+The template installation script is viewable [here](./public/install.sh.template).
 
 #### Non-Interactive Installation
 
@@ -219,3 +219,7 @@ addition to creating release.
 
 **WARNING**: Creating a release through the GitHub UI creates a new release but does **NOT** trigger
 the workflow. This leads to a release without a Docker image or binaries, which breaks the installation script.
+
+## License
+
+Nexus CLI is distributed under the terms of both the [MIT License](./LICENSE-MIT) and the [Apache License (Version 2.0)](./LICENSE-APACHE).

@@ -14,7 +14,6 @@ mod orchestrator;
 mod pretty;
 mod prover;
 mod prover_runtime;
-mod proxy;
 mod register;
 pub mod system;
 mod task;
@@ -28,7 +27,7 @@ use crate::config::{Config, get_config_path};
 use crate::environment::Environment;
 use crate::orchestrator::{Orchestrator, OrchestratorClient};
 use crate::pretty::print_cmd_info;
-use crate::prover_runtime::{start_anonymous_workers, start_authenticated_workers_multi};
+use crate::prover_runtime::{start_anonymous_workers, start_authenticated_workers};
 use crate::register::{register_node, register_user};
 use crate::version_requirements::{VersionRequirements, VersionRequirementsError};
 use clap::{ArgAction, Parser, Subcommand};
@@ -55,9 +54,9 @@ struct Args {
 enum Command {
     /// Start the prover
     Start {
-        /// Node ID (can specify multiple)
-        #[arg(long, value_name = "NODE_ID", action = ArgAction::Append)]
-        node_id: Vec<u64>,
+        /// Node ID
+        #[arg(long, value_name = "NODE_ID")]
+        node_id: Option<u64>,
 
         /// Run without the terminal UI
         #[arg(long = "headless", action = ArgAction::SetTrue)]
@@ -67,14 +66,6 @@ enum Command {
         #[arg(long = "max-threads", value_name = "MAX_THREADS")]
         max_threads: Option<u32>,
 
-        /// Disable proxy usage even if proxies.txt exists
-        #[arg(long = "no-proxy", action = ArgAction::SetTrue)]
-        no_proxy: bool,
-
-        /// Custom path to proxy file (default: proxies.txt)
-        #[arg(long = "proxy", value_name = "PATH")]
-        proxy_file: Option<String>,
-
         /// Custom orchestrator URL (overrides environment setting)
         #[arg(long = "orchestrator-url", value_name = "URL")]
         orchestrator_url: Option<String>,
@@ -82,6 +73,10 @@ enum Command {
         /// Disable background colors in the dashboard
         #[arg(long = "no-background-color", action = ArgAction::SetTrue)]
         no_background_color: bool,
+
+        /// Maximum number of tasks to process before exiting (default: unlimited)
+        #[arg(long = "max-tasks", value_name = "MAX_TASKS")]
+        max_tasks: Option<u32>,
     },
     /// Register a new user
     RegisterUser {
@@ -101,6 +96,12 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    // Set up panic hook to prevent core dumps
+    std::panic::set_hook(Box::new(|panic_info| {
+        eprintln!("Panic occurred: {}", panic_info);
+        std::process::exit(1);
+    }));
+
     let nexus_environment_str = std::env::var("NEXUS_ENVIRONMENT").unwrap_or_default();
     let environment = nexus_environment_str
         .parse::<Environment>()
@@ -114,10 +115,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             node_id,
             headless,
             max_threads,
-            no_proxy,
-            proxy_file,
             orchestrator_url,
             no_background_color,
+            max_tasks,
         } => {
             // If a custom orchestrator URL is provided, create a custom environment
             let final_environment = if let Some(url) = orchestrator_url {
@@ -133,9 +133,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 config_path,
                 headless,
                 max_threads,
-                no_proxy,
-                proxy_file,
                 no_background_color,
+                max_tasks,
             )
             .await
         }
@@ -158,20 +157,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
 /// Starts the Nexus CLI application.
 ///
 /// # Arguments
-/// * `node_ids` - This client's unique identifiers, if available.
+/// * `node_id` - This client's unique identifier, if available.
 /// * `env` - The environment to connect to.
 /// * `config_path` - Path to the configuration file.
 /// * `headless` - If true, runs without the terminal UI.
 /// * `max_threads` - Optional maximum number of threads to use for proving.
 async fn start(
-    node_ids: Vec<u64>,
+    node_id: Option<u64>,
     env: Environment,
     config_path: std::path::PathBuf,
     headless: bool,
     max_threads: Option<u32>,
-    no_proxy: bool,
-    proxy_file: Option<String>,
     no_background_color: bool,
+    max_tasks: Option<u32>,
 ) -> Result<(), Box<dyn Error>> {
     // Check version requirements before starting any workers
     match VersionRequirements::fetch().await {
@@ -196,7 +194,7 @@ async fn start(
                 Err(e) => {
                     eprintln!("❌ Failed to parse version requirements: {}", e);
                     eprintln!(
-                        "If this issue persists, please file a bug report at: https://github.com/nexus-xyz/nexus-cli/issues"
+                        "If this issue persists, please file a bug report at: https://github.com/nexus-xyz/nexus-cli/issues/new"
                     );
                     std::process::exit(1);
                 }
@@ -205,26 +203,26 @@ async fn start(
         Err(VersionRequirementsError::Fetch(e)) => {
             eprintln!("❌ Failed to fetch version requirements: {}", e);
             eprintln!(
-                "If this issue persists, please file a bug report at: https://github.com/nexus-xyz/nexus-cli/issues"
+                "If this issue persists, please file a bug report at: https://github.com/nexus-xyz/nexus-cli/issues/new"
             );
             std::process::exit(1);
         }
         Err(e) => {
             eprintln!("❌ Failed to check version requirements: {}", e);
             eprintln!(
-                "If this issue persists, please file a bug report at: https://github.com/nexus-xyz/nexus-cli/issues"
+                "If this issue persists, please file a bug report at: https://github.com/nexus-xyz/nexus-cli/issues/new"
             );
             std::process::exit(1);
         }
     }
 
-    let mut node_ids = node_ids;
+    let mut node_id = node_id;
 
     // If no node ID is provided, try to load it from the config file.
-    if node_ids.is_empty() && config_path.exists() {
+    if node_id.is_none() && config_path.exists() {
         let config = Config::load_from_file(&config_path)?;
 
-        // Check if user is registered but node_ids are missing or invalid
+        // Check if user is registered but node_id is missing or invalid
         if !config.user_id.is_empty() {
             if config.node_id.is_empty() {
                 print_cmd_info!(
@@ -237,25 +235,17 @@ async fn start(
                 );
             }
 
-            // Support comma-separated node IDs in config
-            let parsed_ids: Result<Vec<u64>, _> = config.node_id
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(|s| s.parse::<u64>())
-                .collect();
-            
-            match parsed_ids {
-                Ok(ids) => {
-                    node_ids = ids;
-                    print_cmd_info!("✅ Found Node IDs from config file", "Node IDs: {:?}", node_ids);
+            match config.node_id.parse::<u64>() {
+                Ok(id) => {
+                    node_id = Some(id);
+                    print_cmd_info!("✅ Found Node ID from config file", "Node ID: {}", id);
                 }
                 Err(_) => {
                     print_cmd_info!(
-                        "❌ Invalid node IDs in config file.",
+                        "❌ Invalid node ID in config file.",
                         "Please register a new node: nexus-cli register-node"
                     );
-                    return Err("Invalid node IDs in config. Please run 'nexus-cli register-node' to fix this.".into());
+                    return Err("Invalid node ID in config. Please run 'nexus-cli register-node' to fix this.".into());
                 }
             }
         } else {
@@ -265,7 +255,7 @@ async fn start(
             );
             return Err("User registration required. Please run 'nexus-cli register-user --wallet-address <your-wallet-address>' first.".into());
         }
-    } else if node_ids.is_empty() {
+    } else if node_id.is_none() {
         // No config file exists at all
         print_cmd_info!(
             "Welcome to Nexus CLI!",
@@ -276,18 +266,13 @@ async fn start(
     // Create a signing key for the prover.
     let mut csprng = rand_core::OsRng;
     let signing_key: SigningKey = SigningKey::generate(&mut csprng);
-    // Set global proxy settings
-    crate::proxy::set_proxy_enabled(!no_proxy);
-    if let Some(proxy_path) = proxy_file {
-        crate::proxy::set_proxy_file_path(proxy_path);
-    }
     let orchestrator_client = OrchestratorClient::new(env.clone());
     // Clamp the number of workers to [1,8]. Keep this low for now to avoid rate limiting.
     let num_workers: usize = max_threads.unwrap_or(1).clamp(1, 8) as usize;
     let (shutdown_sender, _) = broadcast::channel(1); // Only one shutdown signal needed
 
     // Get client_id for analytics - use wallet address from API if available, otherwise "anonymous"
-    let client_id = if let Some(node_id) = node_ids.first() {
+    let client_id = if let Some(node_id) = node_id {
         match orchestrator_client.get_node(&node_id.to_string()).await {
             Ok(wallet_address) => {
                 // Use wallet address as client_id for analytics
@@ -303,21 +288,23 @@ async fn start(
         "anonymous".to_string()
     };
 
-    let (mut event_receiver, mut join_handles) = if node_ids.is_empty() {
-        // Anonymous mode
-        start_anonymous_workers(num_workers, shutdown_sender.subscribe(), env, client_id).await
-    } else {
-        // Authenticated mode with multiple node IDs support
-        start_authenticated_workers_multi(
-            node_ids.clone(),
-            signing_key.clone(),
-            orchestrator_client.clone(),
-            num_workers,
-            shutdown_sender.subscribe(),
-            env,
-            client_id,
-        )
-        .await
+    let (mut event_receiver, mut join_handles) = match node_id {
+        Some(node_id) => {
+            start_authenticated_workers(
+                node_id,
+                signing_key.clone(),
+                orchestrator_client.clone(),
+                num_workers,
+                shutdown_sender.subscribe(),
+                env.clone(),
+                client_id,
+                max_tasks,
+            )
+            .await
+        }
+        None => {
+            start_anonymous_workers(num_workers, shutdown_sender.subscribe(), env, client_id).await
+        }
     };
 
     if !headless {
@@ -332,11 +319,12 @@ async fn start(
 
         // Create the application and run it.
         let app = ui::App::new(
-            if node_ids.is_empty() { None } else { Some(node_ids[0]) },
+            node_id,
             orchestrator_client.environment().clone(),
             event_receiver,
             shutdown_sender,
             no_background_color,
+            num_workers,
         );
         let res = ui::run(&mut terminal, app).await;
 
@@ -353,13 +341,31 @@ async fn start(
     } else {
         // Headless mode: log events to console.
 
-        // Trigger shutdown on Ctrl+C
+        // Trigger shutdown on Ctrl+C and other signals
         let shutdown_sender_clone = shutdown_sender.clone();
         tokio::spawn(async move {
             if tokio::signal::ctrl_c().await.is_ok() {
                 let _ = shutdown_sender_clone.send(());
             }
         });
+
+        // Also handle SIGTERM gracefully (Unix only)
+        #[cfg(unix)]
+        {
+            let shutdown_sender_clone2 = shutdown_sender.clone();
+            tokio::spawn(async move {
+                if tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).is_ok()
+                {
+                    if let Ok(mut signal) =
+                        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    {
+                        if signal.recv().await.is_some() {
+                            let _ = shutdown_sender_clone2.send(());
+                        }
+                    }
+                }
+            });
+        }
 
         let mut shutdown_receiver = shutdown_sender.subscribe();
         loop {

@@ -31,9 +31,6 @@ pub trait Orchestrator: Send + Sync {
     /// Get the wallet address associated with a node ID.
     async fn get_node(&self, node_id: &str) -> Result<String, OrchestratorError>;
 
-    /// Get the list of tasks currently assigned to the node.
-    async fn get_tasks(&self, node_id: &str) -> Result<Vec<Task>, OrchestratorError>;
-
     /// Request a new proof task for the node.
     async fn get_proof_task(
         &self,
@@ -42,6 +39,7 @@ pub trait Orchestrator: Send + Sync {
     ) -> Result<Task, OrchestratorError>;
 
     /// Submits a proof to the orchestrator.
+    #[allow(clippy::too_many_arguments)]
     async fn submit_proof(
         &self,
         task_id: &str,
@@ -49,6 +47,7 @@ pub trait Orchestrator: Send + Sync {
         proof: Vec<u8>,
         signing_key: SigningKey,
         num_provers: usize,
-        task_type: Option<crate::nexus_orchestrator::TaskType>,
+        task_type: crate::nexus_orchestrator::TaskType,
+        individual_proof_hashes: &[String],
     ) -> Result<(), OrchestratorError>;
 }

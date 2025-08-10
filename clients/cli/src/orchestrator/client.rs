@@ -4,8 +4,8 @@
 
 use crate::environment::Environment;
 use crate::nexus_orchestrator::{
-    GetProofTaskRequest, GetProofTaskResponse, GetTasksResponse, NodeType, RegisterNodeRequest,
-    RegisterNodeResponse, RegisterUserRequest, SubmitProofRequest, TaskDifficulty, UserResponse,
+    GetProofTaskRequest, GetProofTaskResponse, NodeType, RegisterNodeRequest, RegisterNodeResponse,
+    RegisterUserRequest, SubmitProofRequest, TaskDifficulty, UserResponse,
 };
 use crate::orchestrator::Orchestrator;
 use crate::orchestrator::error::OrchestratorError;
@@ -17,6 +17,15 @@ use prost::Message;
 use reqwest::{Client, ClientBuilder, Response};
 use std::sync::OnceLock;
 use std::time::Duration;
+
+// Build timestamp in milliseconds since epoch
+static BUILD_TIMESTAMP: &str = match option_env!("BUILD_TIMESTAMP") {
+    Some(timestamp) => timestamp,
+    None => "Build timestamp not available",
+};
+
+// User-Agent string with CLI version
+const USER_AGENT: &str = concat!("nexus-cli/", env!("CARGO_PKG_VERSION"));
 
 // Privacy-preserving country detection for network optimization.
 // Only stores 2-letter country codes (e.g., "US", "CA", "GB") to help route
@@ -130,7 +139,13 @@ impl OrchestratorClient {
         endpoint: &str,
     ) -> Result<T, OrchestratorError> {
         let url = self.build_url(endpoint);
-        let response = self.client.get(&url).send().await?;
+        let response = self
+            .client
+            .get(&url)
+            .header("User-Agent", USER_AGENT)
+            .header("X-Build-Timestamp", BUILD_TIMESTAMP)
+            .send()
+            .await?;
 
         let response = Self::handle_response_status(response).await?;
         let response_bytes = response.bytes().await?;
@@ -147,6 +162,8 @@ impl OrchestratorClient {
         let response = client
             .post(&url)
             .header("Content-Type", "application/octet-stream")
+            .header("User-Agent", USER_AGENT)
+            .header("X-Build-Timestamp", BUILD_TIMESTAMP)
             .body(body)
             .send()
             .await?;
@@ -166,6 +183,8 @@ impl OrchestratorClient {
         let response = client
             .post(&url)
             .header("Content-Type", "application/octet-stream")
+            .header("User-Agent", USER_AGENT)
+            .header("X-Build-Timestamp", BUILD_TIMESTAMP)
             .body(body)
             .send()
             .await?;
@@ -275,7 +294,6 @@ impl Orchestrator for OrchestratorClient {
     async fn get_user(&self, wallet_address: &str) -> Result<String, OrchestratorError> {
         let wallet_path = urlencoding::encode(wallet_address).into_owned();
         let endpoint = format!("v3/users/{}", wallet_path);
-
         let user_response: UserResponse = self.get_request(&endpoint).await?;
         Ok(user_response.user_id)
     }
@@ -291,7 +309,6 @@ impl Orchestrator for OrchestratorClient {
             wallet_address: wallet_address.to_string(),
         };
         let request_bytes = Self::encode_request(&request);
-
         self.post_request_no_response("v3/users", request_bytes)
             .await
     }
@@ -303,7 +320,6 @@ impl Orchestrator for OrchestratorClient {
             user_id: user_id.to_string(),
         };
         let request_bytes = Self::encode_request(&request);
-
         let response: RegisterNodeResponse = self.post_request("v3/nodes", request_bytes).await?;
         Ok(response.node_id)
     }
@@ -311,16 +327,9 @@ impl Orchestrator for OrchestratorClient {
     /// Get the wallet address associated with a node ID.
     async fn get_node(&self, node_id: &str) -> Result<String, OrchestratorError> {
         let endpoint = format!("v3/nodes/{}", node_id);
-
         let node_response: crate::nexus_orchestrator::GetNodeResponse =
             self.get_request(&endpoint).await?;
         Ok(node_response.wallet_address)
-    }
-
-    async fn get_tasks(&self, node_id: &str) -> Result<Vec<Task>, OrchestratorError> {
-        let response: GetTasksResponse = self.get_request(&format!("v3/tasks/{}", node_id)).await?;
-        let tasks = response.tasks.iter().map(Task::from).collect();
-        Ok(tasks)
     }
 
     async fn get_proof_task(
@@ -335,7 +344,6 @@ impl Orchestrator for OrchestratorClient {
             max_difficulty: TaskDifficulty::Large as i32,
         };
         let request_bytes = Self::encode_request(&request);
-
         let response: GetProofTaskResponse = self.post_request("v3/tasks", request_bytes).await?;
         Ok(Task::from(&response))
     }
@@ -347,7 +355,8 @@ impl Orchestrator for OrchestratorClient {
         proof: Vec<u8>,
         signing_key: SigningKey,
         num_provers: usize,
-        task_type: Option<crate::nexus_orchestrator::TaskType>,
+        task_type: crate::nexus_orchestrator::TaskType,
+        individual_proof_hashes: &[String],
     ) -> Result<(), OrchestratorError> {
         let (program_memory, total_memory) = get_memory_info();
         let flops = estimate_peak_gflops(num_provers);
@@ -355,11 +364,27 @@ impl Orchestrator for OrchestratorClient {
 
         // Detect country for network optimization (privacy-preserving: only country code, no precise location)
         let location = self.get_country().await;
-        // Only attach proof if task type is not ProofHash
-        // If task_type is None, default to attaching proof for backward compatibility
-        let proof_to_send = match task_type {
-            Some(crate::nexus_orchestrator::TaskType::ProofHash) => Vec::new(),
-            _ => proof, // Attach proof for ProofRequired or None (backward compatibility)
+        // Handle different task types
+        let (proof_to_send, all_proof_hashes_to_send) = match task_type {
+            crate::nexus_orchestrator::TaskType::ProofHash => {
+                // For ProofHash tasks, don't send proof or individual hashes
+                (Vec::new(), Vec::new())
+            }
+            crate::nexus_orchestrator::TaskType::AllProofHashes => {
+                // For AllProofHashes tasks, don't send proof but send all individual hashes
+                // Add warning for large numbers of inputs
+                if individual_proof_hashes.len() > 100 {
+                    eprintln!(
+                        "WARNING: Task with {} individual proof hashes may not scale well for ALL_PROOF_HASHES task type",
+                        individual_proof_hashes.len()
+                    );
+                }
+                (Vec::new(), individual_proof_hashes.to_vec())
+            }
+            _ => {
+                // For ProofRequired and backward compatibility, attach proof
+                (proof, Vec::new())
+            }
         };
 
         let request = SubmitProofRequest {
@@ -376,9 +401,10 @@ impl Orchestrator for OrchestratorClient {
             }),
             ed25519_public_key: public_key,
             signature,
+            all_proof_hashes: all_proof_hashes_to_send,
+            proofs: Vec::new(),
         };
         let request_bytes = Self::encode_request(&request);
-
         self.post_request_no_response("v3/tasks/submit", request_bytes)
             .await
     }
@@ -430,23 +456,6 @@ mod live_orchestrator_tests {
                 println!("Got proof task: {}", task);
             }
             Err(e) => panic!("Failed to get proof task: {}", e),
-        }
-    }
-
-    #[tokio::test]
-    #[ignore] // This test requires a live orchestrator instance.
-    /// Should return the list of tasks for the node.
-    async fn test_get_tasks() {
-        let client = super::OrchestratorClient::new(Environment::Production);
-        let node_id = "5880437"; // Example node ID
-        match client.get_tasks(node_id).await {
-            Ok(tasks) => {
-                println!("Got {} tasks", tasks.len());
-                for task in tasks {
-                    println!("Task: {}", task);
-                }
-            }
-            Err(e) => panic!("Failed to get tasks: {}", e),
         }
     }
 
@@ -507,7 +516,8 @@ mod tests {
                 proof.clone(),
                 signing_key.clone(),
                 num_workers,
-                Some(TaskType::ProofRequired),
+                TaskType::ProofRequired,
+                &[], // No individual proof hashes for this test
             )
             .await;
         // This will fail because we're not actually submitting to a real orchestrator,
@@ -522,7 +532,8 @@ mod tests {
                 proof,
                 signing_key,
                 num_workers,
-                Some(TaskType::ProofHash),
+                TaskType::ProofHash,
+                &[], // No individual proof hashes for this test
             )
             .await;
         // This will also fail, but the proof should be empty in the request
