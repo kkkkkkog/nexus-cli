@@ -1,3 +1,3 @@
-5c351e20d4703c1f927b3abf632671da4e8f214530da4fde3ec2098ee93cffe0  nexus-network-0.10.5-linux-x86_64-static
-1080722b3543bf8dd325e86e7f12212a7f67b048f516553293e1f67b5bb4a089  nexus-network-0.10.5-linux-x86_64-static.tar.gz
-6daadb7a56a258fa751148467994b8ffadd17f94df444c3e29b84036f0ffe188  nexus-network-0.10.5-linux-x86_64-static.zip
+f39a569e872420b9080324e9ffada399393765d76e59d2da41bd61f84f08d9ba  nexus-network-0.10.5-linux-x86_64-static
+2f40bf1bcc58f5a433aec2e4f3fa85a9df6642918be1bddf8411595b59575a9d  nexus-network-0.10.5-linux-x86_64-static.tar.gz
+ba33b5473109263c54d24a4f58f34e62e8e7976dfe3e307b58f38098b411f27d  nexus-network-0.10.5-linux-x86_64-static.zip
