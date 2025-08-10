@@ -40,7 +40,8 @@ use crossterm::{
 use ed25519_dalek::SigningKey;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::{error::Error, io};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
+use crate::proxy::{set_proxy_enabled, set_proxy_file_path};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -55,9 +56,9 @@ struct Args {
 enum Command {
     /// Start the prover
     Start {
-        /// Node ID
-        #[arg(long, value_name = "NODE_ID")]
-        node_id: Option<u64>,
+        /// Node ID (can be provided multiple times)
+        #[arg(long = "node-id", value_name = "NODE_ID", action = ArgAction::Append)]
+        node_ids: Vec<u64>,
 
         /// Run without the terminal UI
         #[arg(long = "headless", action = ArgAction::SetTrue)]
@@ -70,6 +71,18 @@ enum Command {
         /// Custom orchestrator URL (overrides environment setting)
         #[arg(long = "orchestrator-url", value_name = "URL")]
         orchestrator_url: Option<String>,
+
+        /// Enable proxy usage (overrides default)
+        #[arg(long = "proxy", action = ArgAction::SetTrue)]
+        proxy: bool,
+
+        /// Disable proxy usage
+        #[arg(long = "no-proxy", action = ArgAction::SetTrue)]
+        no_proxy: bool,
+
+        /// Path to proxies.txt file
+        #[arg(long = "proxy-file", value_name = "PATH")]
+        proxy_file: Option<String>,
 
         /// Disable background colors in the dashboard
         #[arg(long = "no-background-color", action = ArgAction::SetTrue)]
@@ -113,10 +126,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
     match args.command {
         Command::Start {
-            node_id,
+            node_ids,
             headless,
             max_threads,
             orchestrator_url,
+            proxy,
+            no_proxy,
+            proxy_file,
             no_background_color,
             max_tasks,
         } => {
@@ -129,11 +145,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 environment
             };
             start(
-                node_id,
+                node_ids,
                 final_environment,
                 config_path,
                 headless,
                 max_threads,
+                proxy,
+                no_proxy,
+                proxy_file,
                 no_background_color,
                 max_tasks,
             )
@@ -164,11 +183,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
 /// * `headless` - If true, runs without the terminal UI.
 /// * `max_threads` - Optional maximum number of threads to use for proving.
 async fn start(
-    node_id: Option<u64>,
+    node_ids: Vec<u64>,
     env: Environment,
     config_path: std::path::PathBuf,
     headless: bool,
     max_threads: Option<u32>,
+    proxy: bool,
+    no_proxy: bool,
+    proxy_file: Option<String>,
     no_background_color: bool,
     max_tasks: Option<u32>,
 ) -> Result<(), Box<dyn Error>> {
@@ -217,10 +239,20 @@ async fn start(
         }
     }
 
-    let mut node_id = node_id;
+    let mut node_ids = node_ids;
 
-    // If no node ID is provided, try to load it from the config file.
-    if node_id.is_none() && config_path.exists() {
+    // Apply proxy settings from CLI flags before network is used
+    if let Some(path) = proxy_file {
+        set_proxy_file_path(path);
+    }
+    if no_proxy {
+        set_proxy_enabled(false);
+    } else if proxy {
+        set_proxy_enabled(true);
+    }
+
+    // If no node IDs are provided, try to load one from the config file.
+    if node_ids.is_empty() && config_path.exists() {
         let config = Config::load_from_file(&config_path)?;
 
         // Check if user is registered but node_id is missing or invalid
@@ -238,7 +270,7 @@ async fn start(
 
             match config.node_id.parse::<u64>() {
                 Ok(id) => {
-                    node_id = Some(id);
+                    node_ids.push(id);
                     print_cmd_info!("✅ Found Node ID from config file", "Node ID: {}", id);
                 }
                 Err(_) => {
@@ -256,7 +288,7 @@ async fn start(
             );
             return Err("User registration required. Please run 'nexus-cli register-user --wallet-address <your-wallet-address>' first.".into());
         }
-    } else if node_id.is_none() {
+    } else if node_ids.is_empty() {
         // No config file exists at all
         print_cmd_info!(
             "Welcome to Nexus CLI!",
@@ -272,40 +304,63 @@ async fn start(
     let num_workers: usize = max_threads.unwrap_or(1).clamp(1, 8) as usize;
     let (shutdown_sender, _) = broadcast::channel(1); // Only one shutdown signal needed
 
-    // Get client_id for analytics - use wallet address from API if available, otherwise "anonymous"
-    let client_id = if let Some(node_id) = node_id {
-        match orchestrator_client.get_node(&node_id.to_string()).await {
-            Ok(wallet_address) => {
-                // Use wallet address as client_id for analytics
-                wallet_address
-            }
-            Err(_) => {
-                // If API call fails, use "anonymous" regardless of config
-                "anonymous".to_string()
-            }
+    // Get client_id for analytics
+    let client_id = if node_ids.len() == 1 {
+        let only_id = node_ids[0];
+        match orchestrator_client.get_node(&only_id.to_string()).await {
+            Ok(wallet_address) => wallet_address,
+            Err(_) => "anonymous".to_string(),
         }
-    } else {
-        // No node_id available, use "anonymous"
+    } else if node_ids.is_empty() {
         "anonymous".to_string()
+    } else {
+        "multi-node".to_string()
     };
 
-    let (mut event_receiver, mut join_handles) = match node_id {
-        Some(node_id) => {
-            start_authenticated_workers(
-                node_id,
+    // Start workers depending on node IDs
+    let (mut event_receiver, mut join_handles) = if node_ids.is_empty() {
+        start_anonymous_workers(num_workers, shutdown_sender.subscribe(), env, client_id).await
+    } else if node_ids.len() == 1 {
+        start_authenticated_workers(
+            node_ids[0],
+            signing_key.clone(),
+            orchestrator_client.clone(),
+            num_workers,
+            shutdown_sender.subscribe(),
+            env.clone(),
+            client_id,
+            max_tasks,
+        )
+        .await
+    } else {
+        // Multiple node IDs: start a worker set for each and forward events into a single receiver
+        let mut all_handles = Vec::new();
+        let (master_sender, master_receiver) = mpsc::channel::<crate::events::Event>(crate::consts::prover::EVENT_QUEUE_SIZE);
+        for id in node_ids.iter().copied() {
+            let (mut rx, mut handles) = start_authenticated_workers(
+                id,
                 signing_key.clone(),
                 orchestrator_client.clone(),
                 num_workers,
                 shutdown_sender.subscribe(),
                 env.clone(),
-                client_id,
+                client_id.clone(),
                 max_tasks,
             )
-            .await
+            .await;
+            all_handles.append(&mut handles);
+            // Forward events from this receiver to the master sender
+            let master_sender_clone = master_sender.clone();
+            let forwarder = tokio::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    if master_sender_clone.send(event).await.is_err() {
+                        break;
+                    }
+                }
+            });
+            all_handles.push(forwarder);
         }
-        None => {
-            start_anonymous_workers(num_workers, shutdown_sender.subscribe(), env, client_id).await
-        }
+        (master_receiver, all_handles)
     };
 
     if !headless {
@@ -320,7 +375,7 @@ async fn start(
 
         // Create the application and run it.
         let app = ui::App::new(
-            node_id,
+            if node_ids.len() == 1 { Some(node_ids[0]) } else { None },
             orchestrator_client.environment().clone(),
             event_receiver,
             shutdown_sender,
