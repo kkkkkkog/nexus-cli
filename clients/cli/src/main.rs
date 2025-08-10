@@ -12,6 +12,7 @@ mod logging;
 mod nexus_orchestrator;
 mod orchestrator;
 mod pretty;
+mod proxy;
 mod prover;
 mod prover_runtime;
 mod register;
